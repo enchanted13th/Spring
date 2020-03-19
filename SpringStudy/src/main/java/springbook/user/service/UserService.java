@@ -1,32 +1,37 @@
 package springbook.user.service;
 
-import org.springframework.jdbc.datasource.DataSourceTransactionManager;
-import org.springframework.jdbc.datasource.DataSourceUtils;
+import org.springframework.mail.MailSender;
+import org.springframework.mail.SimpleMailMessage;
+import org.springframework.mail.javamail.JavaMailSenderImpl;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.support.DefaultTransactionDefinition;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 import springbook.user.dao.UserDao;
 import springbook.user.domain.Level;
 import springbook.user.domain.User;
 
-import javax.sql.DataSource;
-import java.sql.Connection;
 import java.util.List;
 
 public class UserService {
     private UserDao userDao;
     private UserLevelUpgradePolicy levelUpgradePolicy;
-    private DataSource dataSource;
+    private PlatformTransactionManager transactionManager;
+    private MailSender mailSender;
 
     public void setUserDao(UserDao userDao) {
         this.userDao = userDao;
     }
 
-    public void setLevelUpgradePolicy(UserLevelUpgradePolicy levelUpgradePolicy) { this.levelUpgradePolicy = levelUpgradePolicy;}
+    public void setLevelUpgradePolicy(UserLevelUpgradePolicy levelUpgradePolicy) {
+        this.levelUpgradePolicy = levelUpgradePolicy;
+    }
 
-    public void setDataSource(DataSource dataSource) {
-        this.dataSource = dataSource;
+    public void setTransactionManager(PlatformTransactionManager transactionManager) {
+        this.transactionManager = transactionManager;
+    }
+
+    public void setMailSender(MailSender mailSender) {
+        this.mailSender = mailSender;
     }
 
     public void add(User user) {
@@ -41,7 +46,6 @@ public class UserService {
     }
 
     public void upgradeLevels() throws Exception {
-        PlatformTransactionManager transactionManager = new DataSourceTransactionManager(dataSource);
         TransactionStatus status = transactionManager.getTransaction(new DefaultTransactionDefinition());
 
         try {
@@ -61,9 +65,20 @@ public class UserService {
     protected void upgradeLevel(User user) {
         levelUpgradePolicy.upgradeLevel(user);
         userDao.update(user);
+        sendUpgradeEmail(user);
     }
 
     private boolean canUpgradeLevel(User user) {
         return levelUpgradePolicy.canUpgradeLevel(user);
+    }
+
+    private void sendUpgradeEmail(User user) {
+        SimpleMailMessage mailMessage = new SimpleMailMessage();
+        mailMessage.setTo(user.getEmail());
+        mailMessage.setFrom("useradmin@ksug.org");
+        mailMessage.setSubject("Upgrade 안내");
+        mailMessage.setText("사용자님의 등급이 " + user.getLevel().name());
+
+        mailSender.send(mailMessage);
     }
 }
