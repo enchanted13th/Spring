@@ -15,6 +15,8 @@ import springbook.user.domain.Level;
 import springbook.user.domain.User;
 import springbook.user.service.UserLevelUpgradePolicy;
 import springbook.user.service.UserService;
+import springbook.user.service.UserServiceImpl;
+import springbook.user.service.UserServiceTx;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -31,27 +33,11 @@ import static springbook.user.service.UserLevelUpgradePolicy.MIN_RECCOMEND_FOR_G
 @ContextConfiguration(locations = "/test-applicationContext.xml")
 public class UserServiceTest {
 
-    static class TestUserService extends UserService {
-        private String id;
-
-        private TestUserService(String id) {
-            this.id = id;
-        }
-
-        protected void upgradeLevel(User user) {
-            if (user.getId().equals(id)) {
-                throw new TestUserServiceException();
-            }
-            super.upgradeLevel(user);
-        }
-    }
-
-    static class TestUserServiceException extends RuntimeException {
-
-    }
-
     @Autowired
     private UserService userService;
+
+    @Autowired
+    private UserServiceImpl userServiceImpl;
 
     @Autowired
     private UserDao userDao;
@@ -116,30 +102,70 @@ public class UserServiceTest {
         }
     }
 
-    @Test
-    @DirtiesContext
-    public void upgradeLevels() throws Exception {
-        userService.deleteAll();
-        userService.setTransactionManager(transactionManager);
-        for (User user : users) {
-            userDao.add(user);
+    static class MockUserDAO implements UserDao {
+        private List<User> users;
+        private List<User> updated = new ArrayList<User>();
+
+        private MockUserDAO(List<User> users) {
+            this.users = users;
         }
 
+        public List<User> getUpdated() {
+            return updated;
+        }
+
+        public List<User> getAll() {
+            return this.users;
+        }
+
+        public void update(User user) {
+            updated.add(user);
+        }
+
+        public void add(User user) {
+            throw new UnsupportedOperationException();
+        }
+
+        public void deleteAll() {
+            throw new UnsupportedOperationException();
+        }
+
+        public User get(String id) {
+            throw new UnsupportedOperationException();
+        }
+
+        public int getCount() {
+            throw new UnsupportedOperationException();
+        }
+    }
+
+    @Test
+    public void upgradeLevels() throws Exception {
+        UserServiceImpl userServiceImpl = new UserServiceImpl();
+
+        MockUserDAO mockUserDAO = new MockUserDAO(users);
+        userServiceImpl.setUserDao(mockUserDAO);
+
         MockMailSender mockMailSender = new MockMailSender();
-        userService.setMailSender(mockMailSender);
+        userServiceImpl.setMailSender(mockMailSender);
+        userServiceImpl.setLevelUpgradePolicy(levelUpgradePolicy);
 
-        userService.upgradeLevels();
+        userServiceImpl.upgradeLevels();
 
-        checkLevelUpgraded(users.get(0), false);
-        checkLevelUpgraded(users.get(1), true);
-        checkLevelUpgraded(users.get(2), false);
-        checkLevelUpgraded(users.get(3), true);
-        checkLevelUpgraded(users.get(4), false);
+        List<User> updated = mockUserDAO.getUpdated();
+        assertThat(updated.size(), is(2));
+        checkUserAndLevel(updated.get(0), "joytouch", Level.SILVER);
+        checkUserAndLevel(updated.get(1), "madnite1", Level.GOLD);
 
         List<String> request = mockMailSender.getRequests();
         assertThat(request.size(), is(2));
         assertThat(request.get(0), is(users.get(1).getEmail()));
         assertThat(request.get(1), is(users.get(3).getEmail()));
+    }
+
+    private void checkUserAndLevel(User updated, String expectedId, Level expectedLevel) {
+        assertThat(updated.getId(), is(expectedId));
+        assertThat(updated.getLevel(), is(expectedLevel));
     }
 
     private void checkLevelUpgraded(User user, boolean upgraded) {
@@ -153,19 +179,42 @@ public class UserServiceTest {
 
     }
 
+    static class TestUserService extends UserServiceImpl {
+        private String id;
+
+        private TestUserService(String id) {
+            this.id = id;
+        }
+
+        protected void upgradeLevel(User user) {
+            if (user.getId().equals(id)) {
+                throw new TestUserServiceException();
+            }
+            super.upgradeLevel(user);
+        }
+    }
+
+    static class TestUserServiceException extends RuntimeException {
+
+    }
+
     @Test
     public void upgradeAllOrNothing() throws Exception {
-        UserService testUserService = new TestUserService(users.get(3).getId());
+        UserServiceImpl testUserService = new TestUserService(users.get(3).getId());
         testUserService.setUserDao(this.userDao);
         testUserService.setLevelUpgradePolicy(this.levelUpgradePolicy);
-        testUserService.setTransactionManager(this.transactionManager);
         testUserService.setMailSender(mailSender);
+
+        UserServiceTx userServiceTx = new UserServiceTx();
+        userServiceTx.setTransactionManager(transactionManager);
+        userServiceTx.setUserService(testUserService);
+
         userDao.deleteAll();
         for (User user : users) {
             userDao.add(user);
         }
         try {
-            testUserService.upgradeLevels();
+            userServiceTx.upgradeLevels();
             fail("TestUserServiceException expected");
         } catch (TestUserServiceException e) {
 
